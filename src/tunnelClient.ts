@@ -3,11 +3,11 @@ import WebSocket from "ws"
 import http from "http"
 import readline from "readline"
 import chalk from "chalk"
+import { randomUUID } from "crypto"
 
 dotenv.config()
 
 const BASE_TUNNEL_URL = process.env.TUNNEL_URL
-
 if (!BASE_TUNNEL_URL) {
   console.error(chalk.red("❌ Missing TUNNEL_URL in .env file"))
   process.exit(1)
@@ -31,13 +31,13 @@ args.forEach(arg => {
 })
 
 const startTunnel = (port: number) => {
-  const tunnelId = `port${port}`
+  const tunnelId = randomUUID().slice(0, 8) // unique short tunnel ID
   const ws = new WebSocket(`${BASE_TUNNEL_URL}?id=${tunnelId}`)
 
   let heartbeatInterval: NodeJS.Timeout
 
   ws.on("open", () => {
-    console.log(chalk.green(`[${tunnelId}] Connected to tunnel server`))
+    console.log(chalk.green(`[${tunnelId}] Connected → http(s)://your-domain/tunnel/${tunnelId}/* → localhost:${port}`))
 
     heartbeatInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
