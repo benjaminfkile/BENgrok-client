@@ -7,7 +7,7 @@ import http from "http"
 import https from "https"
 import readline from "readline"
 import chalk from "chalk"
-import clipboard from "clipboardy"
+import copyToClipboard from "./copyToClipboard"
 import { randomUUID } from "crypto"
 import { URL } from "url"
 import { log, cleanOldLogs } from "./logger"
@@ -257,7 +257,7 @@ const setupClipboardShortcuts = () => {
     if (!isNaN(num)) {
       const tunnel = activeTunnels.find((t) => t.index === num)
       if (tunnel) {
-        clipboard.writeSync(tunnel.publicUrl)
+        copyToClipboard(tunnel.publicUrl)
         console.log(
           chalk.magenta(`📋 Copied ${tunnel.friendlyName} URL to clipboard: ${tunnel.publicUrl}`)
         )

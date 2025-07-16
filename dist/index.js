@@ -21,7 +21,7 @@ const http_1 = __importDefault(require("http"));
 const https_1 = __importDefault(require("https"));
 const readline_1 = __importDefault(require("readline"));
 const chalk_1 = __importDefault(require("chalk"));
-const clipboardy_1 = __importDefault(require("clipboardy"));
+const copyToClipboard_1 = __importDefault(require("./copyToClipboard"));
 const crypto_1 = require("crypto");
 const url_1 = require("url");
 const logger_1 = require("./logger");
@@ -203,7 +203,7 @@ const setupClipboardShortcuts = () => {
         if (!isNaN(num)) {
             const tunnel = activeTunnels.find((t) => t.index === num);
             if (tunnel) {
-                clipboardy_1.default.writeSync(tunnel.publicUrl);
+                (0, copyToClipboard_1.default)(tunnel.publicUrl);
                 console.log(chalk_1.default.magenta(`📋 Copied ${tunnel.friendlyName} URL to clipboard: ${tunnel.publicUrl}`));
             }
             else {
