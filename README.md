@@ -13,7 +13,7 @@ Make sure you have the following installed:
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/your-org/ben-grok-client.git
+   git clone git@github.com:benjaminfkile/BENgrok-client.git
    cd ben-grok-client
    ```
 
