@@ -19,8 +19,13 @@ const ask = (question: string): Promise<string> => {
 
 const getTunnelURL = async (): Promise<string> => {
   if (fs.existsSync(TUNNEL_FILE)) {
-    const raw = fs.readFileSync(TUNNEL_FILE, "utf-8").trim().replace(/\/+$/, "")
-    if (raw) return raw
+    const stored = fs.readFileSync(TUNNEL_FILE, "utf-8").trim().replace(/\/+$/, "")
+    if (stored) {
+      const reuse = await ask(`🔁 Use saved tunnel URL (${stored})? (Y/n): `)
+      if (reuse.toLowerCase() === "y" || reuse === "") {
+        return stored
+      }
+    }
   }
 
   const input = await ask("🌐 Enter your tunnel server URL: ")

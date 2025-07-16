@@ -29,9 +29,13 @@ const ask = (question) => {
 };
 const getTunnelURL = () => __awaiter(void 0, void 0, void 0, function* () {
     if (fs_1.default.existsSync(TUNNEL_FILE)) {
-        const raw = fs_1.default.readFileSync(TUNNEL_FILE, "utf-8").trim().replace(/\/+$/, "");
-        if (raw)
-            return raw;
+        const stored = fs_1.default.readFileSync(TUNNEL_FILE, "utf-8").trim().replace(/\/+$/, "");
+        if (stored) {
+            const reuse = yield ask(`🔁 Use saved tunnel URL (${stored})? (Y/n): `);
+            if (reuse.toLowerCase() === "y" || reuse === "") {
+                return stored;
+            }
+        }
     }
     const input = yield ask("🌐 Enter your tunnel server URL: ");
     const clean = input.trim().replace(/\/+$/, "");
