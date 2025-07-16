@@ -10,7 +10,6 @@ if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR)
 export const log = (msg: string) => {
   const line = `[${new Date().toISOString()}] ${msg}\n`
   fs.appendFileSync(LOG_FILE, line)
-  console.log(msg)
 }
 
 export const cleanOldLogs = () => {
