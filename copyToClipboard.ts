@@ -1,16 +1,17 @@
-import os from "os";
-import { exec } from "child_process";
+import os from "os"
+import { exec } from "child_process"
 
 const copyToClipboard = (text: string) => {
-  const platform = os.platform();
+  const platform = os.platform()
+  const cleanText = text.trim()
 
   if (platform === "win32") {
-    exec(`echo ${text} | clip`);
+    exec(`echo|set /p="${cleanText}" | clip`)
   } else if (platform === "darwin") {
-    exec(`echo "${text.replace(/"/g, '\\"')}" | pbcopy`);
+    exec(`printf "%s" "${cleanText.replace(/"/g, '\\"')}" | pbcopy`)
   } else {
-    exec(`echo "${text.replace(/"/g, '\\"')}" | xclip -selection clipboard`);
+    exec(`printf "%s" "${cleanText.replace(/"/g, '\\"')}" | xclip -selection clipboard`)
   }
-};
+}
 
-export default copyToClipboard;
+export default copyToClipboard
