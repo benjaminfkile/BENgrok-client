@@ -20,13 +20,23 @@ const rl = readline.createInterface({
 })
 
 const APP_NAME = process.env.APP_NAME || "BENgrok"
-const TUNNEL_FILE = path.join(os.homedir(), APP_NAME, "tunnel_url.txt")
+const BASE_DIR = path.join(os.homedir(), APP_NAME)
+const TUNNEL_FILE = path.join(BASE_DIR, "tunnel_url.txt")
+const PROFILE_FILE = path.join(BASE_DIR, "profiles.json")
 
 type TunnelEntry = {
   index: number
   friendlyName: string
   publicUrl: string
 }
+
+type SavedProfileEntry = {
+  FriendlyName: string
+  URL: string
+  TunnelId: string
+}
+
+type SavedProfiles = Record<string, SavedProfileEntry[]>
 
 const activeTunnels: TunnelEntry[] = []
 
@@ -55,36 +65,65 @@ const getTunnelURL = async (): Promise<string> => {
 
   const input = await ask("🌐 Enter your tunnel server URL: ")
   const clean = input.trim().replace(/\/+$/, "")
+  fs.mkdirSync(BASE_DIR, { recursive: true })
   fs.writeFileSync(TUNNEL_FILE, clean)
   return clean
 }
 
+const loadProfiles = (): SavedProfiles => {
+  fs.mkdirSync(BASE_DIR, { recursive: true })
+
+  if (!fs.existsSync(PROFILE_FILE)) {
+    fs.writeFileSync(PROFILE_FILE, JSON.stringify({}, null, 2))
+    return {}
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(PROFILE_FILE, "utf-8"))
+  } catch {
+    console.log(chalk.red("⚠️ Failed to read profiles.json — resetting."))
+    fs.writeFileSync(PROFILE_FILE, JSON.stringify({}, null, 2))
+    return {}
+  }
+}
+
+
+const saveProfiles = (profiles: SavedProfiles) => {
+  fs.mkdirSync(BASE_DIR, { recursive: true })
+  fs.writeFileSync(PROFILE_FILE, JSON.stringify(profiles, null, 2))
+}
+
+const saveProfile = (name: string, entries: SavedProfileEntry[]) => {
+  const profiles = loadProfiles()
+  profiles[name] = entries
+  saveProfiles(profiles)
+  console.log(chalk.green(`💾 Saved profile '${name}'`))
+}
+
 const startTunnel = async (
   baseUrl: string,
-  targetUrl: string,
-  friendlyName: string,
+  entry: SavedProfileEntry,
   index: number
 ) => {
-  const parsedTarget = new URL(targetUrl)
-  const tunnelId = randomUUID().slice(0, 8)
+  const parsedTarget = new URL(entry.URL)
+  const tunnelId = entry.TunnelId
   const publicUrl: string = `${baseUrl}/tunnel/${tunnelId}`
 
-  // Ensure insertion order is preserved
   activeTunnels.push({
     index,
-    friendlyName,
+    friendlyName: entry.FriendlyName,
     publicUrl,
   })
 
   const ws = new WebSocket(`${baseUrl}?id=${tunnelId}`)
-
-  let heartbeatInterval: NodeJS.Timeout
   const useHttps = parsedTarget.protocol === "https:"
   const proxyRequest = useHttps ? https.request : http.request
 
+  let heartbeatInterval: NodeJS.Timeout
+
   ws.on("open", () => {
     const logMsg = chalk.green(
-      `✅ Tunnel Ready [${index}]: ${publicUrl} → ${friendlyName} (${targetUrl})`
+      `✅ Tunnel Ready [${index}]: ${publicUrl} → ${entry.FriendlyName} (${entry.URL})`
     )
     console.log(logMsg)
     log(logMsg)
@@ -141,7 +180,7 @@ const startTunnel = async (
           })
         )
         const logMsg = chalk.cyan(
-          `[${tunnelId}] ${req.method} ${req.url} → ${proxyRes.statusCode} (${friendlyName})`
+          `[${tunnelId}] ${req.method} ${req.url} → ${proxyRes.statusCode} (${entry.FriendlyName})`
         )
         console.log(logMsg)
         log(logMsg)
@@ -166,8 +205,8 @@ const startTunnel = async (
   })
 }
 
-const collectTunnels = async (): Promise<{ FriendlyName: string; URL: string }[]> => {
-  const entries: { FriendlyName: string; URL: string }[] = []
+const collectTunnels = async (): Promise<SavedProfileEntry[]> => {
+  const entries: SavedProfileEntry[] = []
 
   while (true) {
     const name = await ask("📝 Enter a friendly name for this tunnel: ")
@@ -175,7 +214,11 @@ const collectTunnels = async (): Promise<{ FriendlyName: string; URL: string }[]
 
     try {
       const parsed = new URL(url)
-      entries.push({ FriendlyName: name, URL: parsed.href })
+      entries.push({
+        FriendlyName: name,
+        URL: parsed.href,
+        TunnelId: randomUUID().slice(0, 8),
+      })
     } catch {
       console.log(chalk.red("❌ Invalid URL, skipping this entry"))
     }
@@ -234,12 +277,46 @@ const main = async () => {
   cleanOldLogs()
 
   const tunnelURL = await getTunnelURL()
-  const entries = await collectTunnels()
+  const profiles = loadProfiles()
+  let entries: SavedProfileEntry[] = []
+
+  if (Object.keys(profiles).length > 0) {
+    const useProfile = await askYesNo("📂 Load a saved tunnel profile?")
+    if (useProfile) {
+      const profileNames = Object.keys(profiles)
+      console.log(chalk.cyan("\nAvailable profiles:"))
+      profileNames.forEach((name, i) => {
+        console.log(`  [${i + 1}] ${name}`)
+      })
+
+      const choice = await ask("Enter profile number: ")
+      const idx = parseInt(choice) - 1
+      const selected = profileNames[idx]
+      if (selected && profiles[selected]) {
+        entries = profiles[selected]
+        console.log(chalk.green(`✅ Loaded profile '${selected}' with ${entries.length} tunnel(s).`))
+      } else {
+        console.log(chalk.red("❌ Invalid profile selection."))
+        rl.close()
+        return
+      }
+    }
+  }
+
+  if (entries.length === 0) {
+    entries = await collectTunnels()
+
+    if (entries.length) {
+      const save = await askYesNo("💾 Save these entries as a new profile?")
+      if (save) {
+        const profileName = await ask("📝 Enter profile name: ")
+        saveProfile(profileName, entries)
+      }
+    }
+  }
 
   if (!entries.length) {
-    const logMsg = chalk.red("❌ No tunnels defined. Exiting.")
-    console.log(logMsg)
-    log(logMsg)
+    console.log(chalk.red("❌ No tunnels to start. Exiting."))
     rl.close()
     return
   }
@@ -249,8 +326,7 @@ const main = async () => {
   log(logMsg)
 
   for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]
-    await startTunnel(tunnelURL, entry.URL, entry.FriendlyName, i + 1)
+    await startTunnel(tunnelURL, entries[i], i + 1)
   }
 
   rl.close()
