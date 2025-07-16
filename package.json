@@ -3,26 +3,41 @@
   "version": "1.0.0",
   "description": "Tunnel client for exposing local servers via WebSocket proxy",
   "main": "index.ts",
-  "scripts": {
-    "clean": "rimraf dist",
-    "build": "npm run clean && tsc",
-    "start": "npm run build && node dist/index.js",
-    "dev": "concurrently \"npx tsc --watch\" \"nodemon -q dist/index.js\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "bin": "dist/index.js",
+  "pkg": {
+    "assets": [
+      "tunnel_url.txt",
+      "logs/**/*"
+    ],
+    "targets": [
+      "node18-linux-x64",
+      "node18-macos-x64",
+      "node18-win-x64"
+    ],
+    "outputPath": "build"
   },
+"scripts": {
+  "clean": "rimraf dist build",
+  "build": "npm run clean && tsc",
+  "start": "npm run build && node dist/index.js",
+  "dev": "concurrently \"npx tsc --watch\" \"nodemon -q dist/index.js\"",
+  "package": "npm run build && node scripts/buildPkg.js"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "chalk": "^5.4.1",
-    "dotenv": "^16.0.3",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.6.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^18.11.9",
     "@types/ws": "^8.18.1",
     "concurrently": "^7.5.0",
+    "dotenv-cli": "^8.0.0",
     "nodemon": "^3.0.1",
+    "pkg": "^5.8.1",
     "rimraf": "^5.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^4.8.4"
