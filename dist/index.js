@@ -18,28 +18,38 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 const ws_1 = __importDefault(require("ws"));
 const http_1 = __importDefault(require("http"));
+const https_1 = __importDefault(require("https"));
 const readline_1 = __importDefault(require("readline"));
 const chalk_1 = __importDefault(require("chalk"));
+const clipboardy_1 = __importDefault(require("clipboardy"));
 const crypto_1 = require("crypto");
+const url_1 = require("url");
 const logger_1 = require("./logger");
 dotenv_1.default.config();
 const rl = readline_1.default.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
 });
 const APP_NAME = process.env.APP_NAME || "BENgrok";
 const TUNNEL_FILE = path_1.default.join(os_1.default.homedir(), APP_NAME, "tunnel_url.txt");
+const activeTunnels = [];
 const ask = (question) => {
-    return new Promise(resolve => rl.question(question, answer => resolve(answer.trim())));
+    return new Promise((resolve) => rl.question(question, (answer) => resolve(answer.trim())));
 };
+const askYesNo = (question) => __awaiter(void 0, void 0, void 0, function* () {
+    const response = yield ask(`${question} (Y/n): `);
+    return response.toLowerCase() === "y" || response === "";
+});
 const getTunnelURL = () => __awaiter(void 0, void 0, void 0, function* () {
     if (fs_1.default.existsSync(TUNNEL_FILE)) {
-        const stored = fs_1.default.readFileSync(TUNNEL_FILE, "utf-8").trim().replace(/\/+$/, "");
+        const stored = fs_1.default
+            .readFileSync(TUNNEL_FILE, "utf-8")
+            .trim()
+            .replace(/\/+$/, "");
         if (stored) {
-            const reuse = yield ask(`🔁 Use saved tunnel URL (${stored})? (Y/n): `);
-            if (reuse.toLowerCase() === "y" || reuse === "") {
+            const reuse = yield askYesNo(`🔁 Use saved tunnel URL (${stored})?`);
+            if (reuse)
                 return stored;
-            }
         }
     }
     const input = yield ask("🌐 Enter your tunnel server URL: ");
@@ -47,12 +57,22 @@ const getTunnelURL = () => __awaiter(void 0, void 0, void 0, function* () {
     fs_1.default.writeFileSync(TUNNEL_FILE, clean);
     return clean;
 });
-const startTunnel = (baseUrl, port, customHost) => __awaiter(void 0, void 0, void 0, function* () {
+const startTunnel = (baseUrl, targetUrl, friendlyName, index) => __awaiter(void 0, void 0, void 0, function* () {
+    const parsedTarget = new url_1.URL(targetUrl);
     const tunnelId = (0, crypto_1.randomUUID)().slice(0, 8);
+    const publicUrl = `${baseUrl}/tunnel/${tunnelId}`;
+    // Ensure insertion order is preserved
+    activeTunnels.push({
+        index,
+        friendlyName,
+        publicUrl,
+    });
     const ws = new ws_1.default(`${baseUrl}?id=${tunnelId}`);
     let heartbeatInterval;
+    const useHttps = parsedTarget.protocol === "https:";
+    const proxyRequest = useHttps ? https_1.default.request : http_1.default.request;
     ws.on("open", () => {
-        const logMsg = chalk_1.default.green(`✅ Tunnel Ready: ${baseUrl}/tunnel/${tunnelId} → localhost:${port}`);
+        const logMsg = chalk_1.default.green(`✅ Tunnel Ready [${index}]: ${publicUrl} → ${friendlyName} (${targetUrl})`);
         console.log(logMsg);
         (0, logger_1.log)(logMsg);
         heartbeatInterval = setInterval(() => {
@@ -79,22 +99,22 @@ const startTunnel = (baseUrl, port, customHost) => __awaiter(void 0, void 0, voi
     ws.on("message", (message) => {
         const req = JSON.parse(message.toString());
         const options = {
-            hostname: "localhost",
-            port,
-            path: req.url,
+            hostname: parsedTarget.hostname,
+            port: parseInt(parsedTarget.port || (useHttps ? "443" : "80")),
+            path: parsedTarget.pathname + (req.url || ""),
             method: req.method,
-            headers: Object.assign(Object.assign({}, req.headers), { "x-tunnel-id": tunnelId, host: customHost || "localhost" })
+            headers: Object.assign(Object.assign({}, req.headers), { "x-tunnel-id": tunnelId, host: parsedTarget.host }),
         };
-        const proxyReq = http_1.default.request(options, (proxyRes) => {
+        const proxyReq = proxyRequest(options, (proxyRes) => {
             let body = "";
-            proxyRes.on("data", chunk => body += chunk);
+            proxyRes.on("data", (chunk) => (body += chunk));
             proxyRes.on("end", () => {
                 ws.send(JSON.stringify({
                     statusCode: proxyRes.statusCode,
                     headers: proxyRes.headers,
-                    body
+                    body,
                 }));
-                const logMsg = chalk_1.default.cyan(`[${tunnelId}] ${req.method} ${req.url} → ${proxyRes.statusCode}`);
+                const logMsg = chalk_1.default.cyan(`[${tunnelId}] ${req.method} ${req.url} → ${proxyRes.statusCode} (${friendlyName})`);
                 console.log(logMsg);
                 (0, logger_1.log)(logMsg);
             });
@@ -103,36 +123,88 @@ const startTunnel = (baseUrl, port, customHost) => __awaiter(void 0, void 0, voi
             ws.send(JSON.stringify({
                 statusCode: 500,
                 headers: {},
-                body: `Tunnel error: ${err.message}`
+                body: `Tunnel error: ${err.message}`,
             }));
             const logMsg = chalk_1.default.red(`[${tunnelId}] Proxy error: ${err.message}`);
             console.error(logMsg);
             (0, logger_1.log)(logMsg);
         });
-        proxyReq.write(req.body);
+        proxyReq.write(req.body || "");
         proxyReq.end();
     });
 });
+const collectTunnels = () => __awaiter(void 0, void 0, void 0, function* () {
+    const entries = [];
+    while (true) {
+        const name = yield ask("📝 Enter a friendly name for this tunnel: ");
+        const url = yield ask("🔗 Enter the full target URL: ");
+        try {
+            const parsed = new url_1.URL(url);
+            entries.push({ FriendlyName: name, URL: parsed.href });
+        }
+        catch (_a) {
+            console.log(chalk_1.default.red("❌ Invalid URL, skipping this entry"));
+        }
+        const addMore = yield askYesNo("➕ Add another tunnel?");
+        if (!addMore)
+            break;
+    }
+    return entries;
+});
+const displayTunnelList = () => {
+    console.log(chalk_1.default.cyan("\n📋 Active Tunnels:"));
+    activeTunnels
+        .sort((a, b) => a.index - b.index)
+        .forEach((tunnel) => {
+        console.log(`  [${tunnel.index}] ${tunnel.friendlyName}: ${tunnel.publicUrl}`);
+    });
+};
+const setupClipboardShortcuts = () => {
+    activeTunnels.sort((a, b) => a.index - b.index);
+    displayTunnelList();
+    console.log(chalk_1.default.yellow("\n⌨️  Press a number (1, 2, 3, ...) to copy a tunnel URL to clipboard. Press Ctrl+C to exit.\n"));
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (key) => {
+        //@ts-ignore
+        const num = parseInt(key);
+        if (!isNaN(num)) {
+            const tunnel = activeTunnels.find((t) => t.index === num);
+            if (tunnel) {
+                clipboardy_1.default.writeSync(tunnel.publicUrl);
+                console.log(chalk_1.default.magenta(`📋 Copied ${tunnel.friendlyName} URL to clipboard: ${tunnel.publicUrl}`));
+            }
+            else {
+                console.log(chalk_1.default.red(`❌ No tunnel found for index ${num}`));
+            }
+        }
+        //@ts-ignore
+        if (key === "\u0003") {
+            console.log(chalk_1.default.gray("\n👋 Exiting..."));
+            process.exit();
+        }
+    });
+};
 const main = () => __awaiter(void 0, void 0, void 0, function* () {
     (0, logger_1.cleanOldLogs)();
     const tunnelURL = yield getTunnelURL();
-    const portInput = yield ask("🔌 Enter port(s) to expose (comma-separated): ");
-    const ports = portInput.split(",").map(p => parseInt(p.trim())).filter(Boolean);
-    if (!ports.length) {
-        const logMsg = chalk_1.default.red("❌ No valid ports entered. Exiting.");
+    const entries = yield collectTunnels();
+    if (!entries.length) {
+        const logMsg = chalk_1.default.red("❌ No tunnels defined. Exiting.");
         console.log(logMsg);
         (0, logger_1.log)(logMsg);
         rl.close();
         return;
     }
-    const hostInput = yield ask("🌐 Optional: custom Host header (blank for localhost): ");
-    const customHost = hostInput.trim() || undefined;
-    const logMsg = chalk_1.default.blue("\n🎯 Starting tunnels...\n");
+    const logMsg = chalk_1.default.blue("\n🚀 Starting tunnel(s)...\n");
     console.log(logMsg);
     (0, logger_1.log)(logMsg);
-    for (const port of ports) {
-        startTunnel(tunnelURL, port, customHost);
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        yield startTunnel(tunnelURL, entry.URL, entry.FriendlyName, i + 1);
     }
     rl.close();
+    setupClipboardShortcuts();
 });
 main();

@@ -16,18 +16,19 @@
     ],
     "outputPath": "build"
   },
-"scripts": {
-  "clean": "rimraf dist build",
-  "build": "npm run clean && tsc",
-  "start": "npm run build && node dist/index.js",
-  "dev": "concurrently \"npx tsc --watch\" \"nodemon -q dist/index.js\"",
-  "package": "npm run build && node scripts/buildPkg.js"
-},
+  "scripts": {
+    "clean": "rimraf dist build",
+    "build": "npm run clean && tsc",
+    "start": "npm run build && node dist/index.js",
+    "dev": "concurrently \"npx tsc --watch\" \"nodemon -q dist/index.js\"",
+    "package": "npm run build && node scripts/buildPkg.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "chalk": "^4.1.2",
+    "clipboardy": "^4.0.0",
     "dotenv": "^16.6.1",
     "ws": "^8.18.3"
   },

@@ -3,9 +3,9 @@ const path = require("path")
 const dotenv = require("dotenv")
 dotenv.config()
 
-const appName = process.env.APP_NAME || "BENgrok-client"
+const appName = process.env.APP_NAME ?? "BENgrok-client"
 
-const nodeVersion = `node${process.env.NODE_VERSION}` || "node18"
+const nodeVersion = `node${process.env.NODE_VERSION ?? 18}`
 
 const targets = [
   "linux-x64",

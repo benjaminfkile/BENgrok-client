@@ -4,33 +4,52 @@ import dotenv from "dotenv"
 import path from "path"
 import WebSocket from "ws"
 import http from "http"
+import https from "https"
 import readline from "readline"
 import chalk from "chalk"
+import clipboard from "clipboardy"
 import { randomUUID } from "crypto"
+import { URL } from "url"
 import { log, cleanOldLogs } from "./logger"
 
 dotenv.config()
 
 const rl = readline.createInterface({
   input: process.stdin,
-  output: process.stdout
+  output: process.stdout,
 })
 
 const APP_NAME = process.env.APP_NAME || "BENgrok"
 const TUNNEL_FILE = path.join(os.homedir(), APP_NAME, "tunnel_url.txt")
 
+type TunnelEntry = {
+  index: number
+  friendlyName: string
+  publicUrl: string
+}
+
+const activeTunnels: TunnelEntry[] = []
+
 const ask = (question: string): Promise<string> => {
-  return new Promise(resolve => rl.question(question, answer => resolve(answer.trim())))
+  return new Promise((resolve) =>
+    rl.question(question, (answer) => resolve(answer.trim()))
+  )
+}
+
+const askYesNo = async (question: string): Promise<boolean> => {
+  const response = await ask(`${question} (Y/n): `)
+  return response.toLowerCase() === "y" || response === ""
 }
 
 const getTunnelURL = async (): Promise<string> => {
   if (fs.existsSync(TUNNEL_FILE)) {
-    const stored = fs.readFileSync(TUNNEL_FILE, "utf-8").trim().replace(/\/+$/, "")
+    const stored = fs
+      .readFileSync(TUNNEL_FILE, "utf-8")
+      .trim()
+      .replace(/\/+$/, "")
     if (stored) {
-      const reuse = await ask(`🔁 Use saved tunnel URL (${stored})? (Y/n): `)
-      if (reuse.toLowerCase() === "y" || reuse === "") {
-        return stored
-      }
+      const reuse = await askYesNo(`🔁 Use saved tunnel URL (${stored})?`)
+      if (reuse) return stored
     }
   }
 
@@ -40,14 +59,33 @@ const getTunnelURL = async (): Promise<string> => {
   return clean
 }
 
-const startTunnel = async (baseUrl: string, port: number, customHost?: string) => {
+const startTunnel = async (
+  baseUrl: string,
+  targetUrl: string,
+  friendlyName: string,
+  index: number
+) => {
+  const parsedTarget = new URL(targetUrl)
   const tunnelId = randomUUID().slice(0, 8)
+  const publicUrl: string = `${baseUrl}/tunnel/${tunnelId}`
+
+  // Ensure insertion order is preserved
+  activeTunnels.push({
+    index,
+    friendlyName,
+    publicUrl,
+  })
+
   const ws = new WebSocket(`${baseUrl}?id=${tunnelId}`)
 
   let heartbeatInterval: NodeJS.Timeout
+  const useHttps = parsedTarget.protocol === "https:"
+  const proxyRequest = useHttps ? https.request : http.request
 
   ws.on("open", () => {
-    const logMsg = chalk.green(`✅ Tunnel Ready: ${baseUrl}/tunnel/${tunnelId} → localhost:${port}`)
+    const logMsg = chalk.green(
+      `✅ Tunnel Ready [${index}]: ${publicUrl} → ${friendlyName} (${targetUrl})`
+    )
     console.log(logMsg)
     log(logMsg)
 
@@ -80,45 +118,115 @@ const startTunnel = async (baseUrl: string, port: number, customHost?: string) =
     const req = JSON.parse(message.toString())
 
     const options: http.RequestOptions = {
-      hostname: "localhost",
-      port,
-      path: req.url,
+      hostname: parsedTarget.hostname,
+      port: parseInt(parsedTarget.port || (useHttps ? "443" : "80")),
+      path: parsedTarget.pathname + (req.url || ""),
       method: req.method,
       headers: {
         ...req.headers,
         "x-tunnel-id": tunnelId,
-        host: customHost || "localhost"
-      }
+        host: parsedTarget.host,
+      },
     }
 
-    const proxyReq = http.request(options, (proxyRes) => {
+    const proxyReq = proxyRequest(options, (proxyRes) => {
       let body = ""
-      proxyRes.on("data", chunk => body += chunk)
+      proxyRes.on("data", (chunk) => (body += chunk))
       proxyRes.on("end", () => {
-        ws.send(JSON.stringify({
-          statusCode: proxyRes.statusCode,
-          headers: proxyRes.headers,
-          body
-        }))
-        const logMsg = chalk.cyan(`[${tunnelId}] ${req.method} ${req.url} → ${proxyRes.statusCode}`)
+        ws.send(
+          JSON.stringify({
+            statusCode: proxyRes.statusCode,
+            headers: proxyRes.headers,
+            body,
+          })
+        )
+        const logMsg = chalk.cyan(
+          `[${tunnelId}] ${req.method} ${req.url} → ${proxyRes.statusCode} (${friendlyName})`
+        )
         console.log(logMsg)
         log(logMsg)
       })
     })
 
     proxyReq.on("error", (err) => {
-      ws.send(JSON.stringify({
-        statusCode: 500,
-        headers: {},
-        body: `Tunnel error: ${err.message}`
-      }))
+      ws.send(
+        JSON.stringify({
+          statusCode: 500,
+          headers: {},
+          body: `Tunnel error: ${err.message}`,
+        })
+      )
       const logMsg = chalk.red(`[${tunnelId}] Proxy error: ${err.message}`)
       console.error(logMsg)
       log(logMsg)
     })
 
-    proxyReq.write(req.body)
+    proxyReq.write(req.body || "")
     proxyReq.end()
+  })
+}
+
+const collectTunnels = async (): Promise<{ FriendlyName: string; URL: string }[]> => {
+  const entries: { FriendlyName: string; URL: string }[] = []
+
+  while (true) {
+    const name = await ask("📝 Enter a friendly name for this tunnel: ")
+    const url = await ask("🔗 Enter the full target URL: ")
+
+    try {
+      const parsed = new URL(url)
+      entries.push({ FriendlyName: name, URL: parsed.href })
+    } catch {
+      console.log(chalk.red("❌ Invalid URL, skipping this entry"))
+    }
+
+    const addMore = await askYesNo("➕ Add another tunnel?")
+    if (!addMore) break
+  }
+
+  return entries
+}
+
+const displayTunnelList = () => {
+  console.log(chalk.cyan("\n📋 Active Tunnels:"))
+  activeTunnels
+    .sort((a, b) => a.index - b.index)
+    .forEach((tunnel) => {
+      console.log(`  [${tunnel.index}] ${tunnel.friendlyName}: ${tunnel.publicUrl}`)
+    })
+}
+
+const setupClipboardShortcuts = () => {
+  activeTunnels.sort((a, b) => a.index - b.index)
+  displayTunnelList()
+
+  console.log(
+    chalk.yellow("\n⌨️  Press a number (1, 2, 3, ...) to copy a tunnel URL to clipboard. Press Ctrl+C to exit.\n")
+  )
+
+  process.stdin.setRawMode(true)
+  process.stdin.resume()
+  process.stdin.setEncoding("utf8")
+
+  process.stdin.on("data", (key) => {
+    //@ts-ignore
+    const num = parseInt(key)
+    if (!isNaN(num)) {
+      const tunnel = activeTunnels.find((t) => t.index === num)
+      if (tunnel) {
+        clipboard.writeSync(tunnel.publicUrl)
+        console.log(
+          chalk.magenta(`📋 Copied ${tunnel.friendlyName} URL to clipboard: ${tunnel.publicUrl}`)
+        )
+      } else {
+        console.log(chalk.red(`❌ No tunnel found for index ${num}`))
+      }
+    }
+    //@ts-ignore
+    if (key === "\u0003") {
+      console.log(chalk.gray("\n👋 Exiting..."))
+      process.exit()
+    }
   })
 }
 
@@ -126,29 +234,27 @@ const main = async () => {
   cleanOldLogs()
 
   const tunnelURL = await getTunnelURL()
+  const entries = await collectTunnels()
 
-  const portInput = await ask("🔌 Enter port(s) to expose (comma-separated): ")
-  const ports = portInput.split(",").map(p => parseInt(p.trim())).filter(Boolean)
-
-  if (!ports.length) {
-    const logMsg = chalk.red("❌ No valid ports entered. Exiting.")
+  if (!entries.length) {
+    const logMsg = chalk.red("❌ No tunnels defined. Exiting.")
     console.log(logMsg)
     log(logMsg)
     rl.close()
     return
   }
 
-  const hostInput = await ask("🌐 Optional: custom Host header (blank for localhost): ")
-  const customHost = hostInput.trim() || undefined
-
-  const logMsg = chalk.blue("\n🎯 Starting tunnels...\n")
+  const logMsg = chalk.blue("\n🚀 Starting tunnel(s)...\n")
   console.log(logMsg)
   log(logMsg)
-  for (const port of ports) {
-    startTunnel(tunnelURL, port, customHost)
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    await startTunnel(tunnelURL, entry.URL, entry.FriendlyName, i + 1)
   }
 
   rl.close()
+  setupClipboardShortcuts()
 }
 
 main()
